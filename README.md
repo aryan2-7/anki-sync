@@ -2,6 +2,8 @@
 
 One-command self-hosted Anki sync server, exposed privately over Tailscale.
 
+this setup is hyperfocused on my usecase of using [amgi](https://github.com/antigluten/amgi), hence why tailscale is needed to serve,
+as amgi only accepts a https connections for syncing
 ## Setup
 
 ```bash

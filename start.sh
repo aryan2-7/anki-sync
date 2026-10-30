@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run a self-hosted Anki sync server and expose it over Tailscale.
-# Ctrl+C stops the server and the tailscale serve rule cleanly.
+# Starts Tailscale if it's off, and Ctrl+C stops the server and the
+# tailscale serve rule cleanly.
 
 set -u
 
@@ -32,6 +33,44 @@ if [ ! -x "$PYTHON" ]; then
   exit 1
 fi
 
+get_state() {
+  tailscale status --json 2>/dev/null \
+    | "$PYTHON" -c "import sys,json; print(json.load(sys.stdin).get('BackendState',''))" 2>/dev/null
+}
+
+# Make sure Tailscale is running and logged in before starting anything.
+ensure_tailscale() {
+  local state launched=0
+  for _ in $(seq 1 30); do
+    state=$(get_state)
+    case "$state" in
+      Running)
+        return 0
+        ;;
+      Stopped|NeedsLogin)
+        echo "Tailscale is $state, connecting..."
+        tailscale up
+        ;;
+      *)
+        if [ "$launched" -eq 0 ]; then
+          launched=1
+          if [ "$(uname)" = "Darwin" ]; then
+            echo "Tailscale isn't running, opening it..."
+            open -a Tailscale
+          else
+            echo "Tailscale isn't running, trying to start tailscaled..."
+            sudo systemctl start tailscaled 2>/dev/null \
+              || echo "Could not start tailscaled automatically. Start it manually." >&2
+          fi
+        fi
+        ;;
+    esac
+    sleep 1
+  done
+  echo "Error: couldn't get Tailscale running." >&2
+  exit 1
+}
+
 SERVER_PID=""
 
 cleanup() {
@@ -44,12 +83,15 @@ cleanup() {
   echo "Done."
   exit 0
 }
+
+# Before the trap, so a Tailscale failure exits with 1 instead of 0
+ensure_tailscale
 trap cleanup INT TERM EXIT
 
 mkdir -p "$SYNC_BASE"
 tailscale serve --bg "$SYNC_PORT"
 
-URL=$(tailscale status --json | python3 -c "import sys,json; print('https://' + json.load(sys.stdin)['Self']['DNSName'].rstrip('.') + '/')")
+URL=$(tailscale status --json | "$PYTHON" -c "import sys,json; print('https://' + json.load(sys.stdin)['Self']['DNSName'].rstrip('.') + '/')")
 echo "Sync URL: $URL"
 echo
 
